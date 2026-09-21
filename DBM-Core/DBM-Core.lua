@@ -7058,6 +7058,7 @@ end
 -- service set right before removal: in combat addons may take items off, but only UseEquipmentSet can put them back.
 do
 	local AUTO_SET = "DBMWeapons"
+	local SNAPSHOT_TTL = 60 -- longest removal cycle (pre-timer + control + re-equip retries) is ~35s
 	local snapshot = {} -- [inventorySlot] = itemLink at removal; tells re-equip retries when everything is back
 	local snapshotTime = 0
 	local lastWeaponSlot = playerClass == "HUNTER" and 18 or 17 -- ranged slot only matters for hunters, other classes keep relics/wands there
@@ -7083,7 +7084,6 @@ do
 	-- Returns true only if the stored set matches what is equipped (save fails silently, e.g. when 10 sets exist).
 	local function saveWeaponSet()
 		for slot = 1, 19 do -- ammo slot 0 isn't accepted by the API
-
 			if slot < 16 or slot > lastWeaponSlot then
 				EquipmentManagerIgnoreSlotForSave(slot)
 			end
@@ -7161,15 +7161,21 @@ do
 		end
 	end
 
+	-- Returns true if an equipment set was used
 	function bossModPrototype:EquipWeapons()
 		if self.Options.EqUneqAuto then
 			-- Nothing was removed by us (e.g. mods schedule re-equip for every raid member): leave weapons alone
 			if not next(snapshot) then return end
+			-- Left over from an unfinished cycle (e.g. died while controlled): don't swap back to outdated weapons
+			if GetTime() - snapshotTime > SNAPSHOT_TTL then
+				twipe(snapshot)
+				return
+			end
 			for slot, link in pairs(snapshot) do
 				if GetInventoryItemLink("player", slot) ~= link then
 					DBM:Debug("trying to equip " .. AUTO_SET)
 					UseEquipmentSet(AUTO_SET)
-					return
+					return true
 				end
 			end
 			-- Everything is back: remaining scheduled retries become no-ops
@@ -7177,6 +7183,7 @@ do
 		elseif self:IsEquipmentSetAvailable("pve") then
 			DBM:Debug("trying to equip pve")
 			UseEquipmentSet("pve")
+			return true
 		end
 	end
 end

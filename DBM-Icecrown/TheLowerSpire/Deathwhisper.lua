@@ -100,6 +100,7 @@ local playerClass = select(2, UnitClass("player"))
 
 local RaidWarningFrame = RaidWarningFrame
 local GetFramesRegisteredForEvent, RaidNotice_AddMessage = GetFramesRegisteredForEvent, RaidNotice_AddMessage
+
 -- Auto mode needs a free equipment set slot for its service set, default mode needs the "pve" set
 local function getMissingSetMessage(self)
 	if not self.Options.EqUneqWeapons or not self:IsHeroic() then return end
@@ -154,8 +155,7 @@ local function UnW(self)
 end
 
 local function EqW(self)
-	self:EquipWeapons()
-	if not self:IsTank() then
+	if self:EquipWeapons() and not self:IsTank() then -- only when a set was actually equipped
 		CancelUnitBuff("player", (GetSpellInfo(25780))) -- Righteous Fury
 	end
 end
