@@ -7053,6 +7053,134 @@ function bossModPrototype:IsEquipmentSetAvailable(setName)
 	return false
 end
 
+-- Weapon swap for mind control mechanics, shared by boss mods.
+-- Default mode re-equips the "pve" equipment set. EqUneqAuto snapshots the equipped weapons into a weapons-only
+-- service set right before removal: in combat addons may take items off, but only UseEquipmentSet can put them back.
+do
+	local AUTO_SET = "DBMWeapons"
+	local snapshot = {} -- [inventorySlot] = itemLink at removal; tells re-equip retries when everything is back
+	local snapshotTime = 0
+	local lastWeaponSlot = playerClass == "HUNTER" and 18 or 17 -- ranged slot only matters for hunters, other classes keep relics/wands there
+
+	-- Drops the cursor item into the first generic bag with free space; returns it to its origin if there is none
+	local function putCursorItemInBags(freeSlots)
+		for bag = 0, NUM_BAG_SLOTS do
+			if freeSlots[bag] > 0 then
+				freeSlots[bag] = freeSlots[bag] - 1 -- server hasn't confirmed the move yet, so track space locally
+				if bag == 0 then
+					PutItemInBackpack()
+				else
+					PutItemInBag(ContainerIDToInventoryID(bag))
+				end
+				return true
+			end
+		end
+		ClearCursor()
+		return false
+	end
+
+	-- Saves equipped weapons into AUTO_SET with every other slot ignored, so using it never touches armor.
+	-- Returns true only if the stored set matches what is equipped (save fails silently, e.g. when 10 sets exist).
+	local function saveWeaponSet()
+		for slot = 1, 19 do -- ammo slot 0 isn't accepted by the API
+
+			if slot < 16 or slot > lastWeaponSlot then
+				EquipmentManagerIgnoreSlotForSave(slot)
+			end
+		end
+		SaveEquipmentSet(AUTO_SET, 1)
+		EquipmentManagerClearIgnoredSlotsForSave()
+		local itemIDs = GetEquipmentSetItemIDs(AUTO_SET)
+		if not itemIDs then return false end
+		for slot = 16, lastWeaponSlot do
+			if (itemIDs[slot] or 0) ~= (GetInventoryItemID("player", slot) or 0) then
+				return false
+			end
+		end
+		return true
+	end
+
+	-- Auto mode needs the service set to exist already or a free equipment manager slot to create it
+	function bossModPrototype:IsWeaponSetSlotAvailable()
+		return GetEquipmentSetInfoByName(AUTO_SET) ~= nil or GetNumEquipmentSets() < (MAX_EQUIPMENT_SETS_PER_PLAYER or 10)
+	end
+
+	-- EqUneqFilter: "OnlyDPS" (default), "DPSTank", "NoFilter"
+	function bossModPrototype:CheckWeaponRemovalFilter()
+		local filter = self.Options.EqUneqFilter
+		if filter == "NoFilter" then
+			return true
+		elseif filter == "DPSTank" then
+			return not self:IsHealer()
+		end
+		return self:IsDps()
+	end
+
+	function bossModPrototype:UnequipWeapons()
+		if self.Options.EqUneqAuto then
+			local hasWeapon
+			for slot = 16, lastWeaponSlot do
+				if GetInventoryItemLink("player", slot) then
+					hasWeapon = true
+					break
+				end
+			end
+			if not hasWeapon then return end
+			-- Mods fire this several times in a row: only a new removal takes a snapshot, retries must not overwrite it
+			if GetTime() - snapshotTime > 2 then
+				if not saveWeaponSet() then
+					DBM:Debug("Could not save " .. AUTO_SET .. " set, weapons left equipped", 2)
+					return -- never take off what can't be put back
+				end
+				twipe(snapshot)
+				for slot = 16, lastWeaponSlot do
+					snapshot[slot] = GetInventoryItemLink("player", slot)
+				end
+				snapshotTime = GetTime()
+			end
+		elseif not self:IsEquipmentSetAvailable("pve") then
+			return
+		end
+		local freeSlots
+		for slot = 16, lastWeaponSlot do
+			if GetInventoryItemLink("player", slot) then
+				if not freeSlots then
+					freeSlots = {}
+					for bag = 0, NUM_BAG_SLOTS do
+						local free, bagType = GetContainerNumFreeSlots(bag)
+						freeSlots[bag] = bagType == 0 and free or 0 -- skip quivers, soul bags, etc.
+					end
+				end
+				PickupInventoryItem(slot)
+				if putCursorItemInBags(freeSlots) then
+					DBM:Debug("Unequipped slot " .. slot, 2)
+				else
+					DBM:Debug("No bag space to unequip slot " .. slot, 2)
+				end
+			end
+		end
+	end
+
+	function bossModPrototype:EquipWeapons()
+		if self.Options.EqUneqAuto then
+			-- Nothing was removed by us (e.g. mods schedule re-equip for every raid member): leave weapons alone
+			if not next(snapshot) then return end
+			for slot, link in pairs(snapshot) do
+				if GetInventoryItemLink("player", slot) ~= link then
+					DBM:Debug("trying to equip " .. AUTO_SET)
+					UseEquipmentSet(AUTO_SET)
+					return
+				end
+			end
+			-- Everything is back: remaining scheduled retries become no-ops
+			twipe(snapshot)
+		elseif self:IsEquipmentSetAvailable("pve") then
+			DBM:Debug("trying to equip pve")
+			UseEquipmentSet("pve")
+		end
+	end
+end
+
 function bossModPrototype:LatencyCheck(custom)
 	return select(3, GetNetStats()) < (custom or DBM.Options.LatencyThreshold)
 end
