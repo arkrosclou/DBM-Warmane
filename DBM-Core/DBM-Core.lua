@@ -7059,15 +7059,15 @@ end
 do
 	local AUTO_SET = "DBMWeapons"
 	local SNAPSHOT_TTL = 60 -- longest removal cycle (pre-timer + control + re-equip retries) is ~35s
-	local snapshot = {} -- [inventorySlot] = itemLink at removal; tells re-equip retries when everything is back
+	local snapshot = {} -- [inventorySlot] = itemLink at removal
 	local snapshotTime = 0
-	local lastWeaponSlot = playerClass == "HUNTER" and 18 or 17 -- ranged slot only matters for hunters, other classes keep relics/wands there
+	local lastWeaponSlot = playerClass == "HUNTER" and 18 or 17 -- other classes keep relics/wands in the ranged slot
 
-	-- Drops the cursor item into the first generic bag with free space; returns it to its origin if there is none
+	-- Returns the item to its slot if bags are full
 	local function putCursorItemInBags(freeSlots)
 		for bag = 0, NUM_BAG_SLOTS do
 			if freeSlots[bag] > 0 then
-				freeSlots[bag] = freeSlots[bag] - 1 -- server hasn't confirmed the move yet, so track space locally
+				freeSlots[bag] = freeSlots[bag] - 1
 				if bag == 0 then
 					PutItemInBackpack()
 				else
@@ -7100,7 +7100,6 @@ do
 		return true
 	end
 
-	-- Auto mode needs the service set to exist already or a free equipment manager slot to create it
 	function bossModPrototype:IsWeaponSetSlotAvailable()
 		return GetEquipmentSetInfoByName(AUTO_SET) ~= nil or GetNumEquipmentSets() < (MAX_EQUIPMENT_SETS_PER_PLAYER or 10)
 	end
@@ -7178,7 +7177,6 @@ do
 					return true
 				end
 			end
-			-- Everything is back: remaining scheduled retries become no-ops
 			twipe(snapshot)
 		elseif self:IsEquipmentSetAvailable("pve") then
 			DBM:Debug("trying to equip pve")
